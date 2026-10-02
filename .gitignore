@@ -1,1 +1,7 @@
 .DS_Store
+.idea/
+*.iml
+**/.env
+**/target/
+**/dist/
+**/node_modules/

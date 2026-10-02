@@ -3,10 +3,11 @@ services:
   nexus:
     image: sonatype/nexus3:3.68.1
     container_name: nexus
-    networks: [cicd_network]
+    networks:
+      - cicd_network
     ports:
-      - "9181:8081"
-      - "9180:8082"
+      - "${NEXUS_UI_PORT:-9181}:8081"
+      - "${NEXUS_DOCKER_REGISTRY_PORT:-9180}:8082"
     volumes:
       - nexus_data:/nexus-data
     environment:
@@ -17,8 +18,10 @@ services:
       timeout: 10s
       retries: 6
       start_period: 90s
+
 networks:
   cicd_network:
     external: true
+
 volumes:
   nexus_data:

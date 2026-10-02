@@ -18,15 +18,14 @@ pipeline {
         // commit actual. Pista: use "${env.BUILD_NUMBER}" y
         // "${env.GIT_COMMIT.take(7)}" dentro de un stage con "script {}"
         // (GIT_COMMIT solo está disponible después del checkout).
-        IMAGE_TAG = "TODO-DEFINA-EN-UN-STAGE-SCRIPT"
-
         // TODO: ajuste host y puerto a los de su Nexus local (Fase 3).
-        NEXUS_REGISTRY   = "TODO-HOST-REGISTRY:TODO-PUERTO-REGISTRY"
-        NEXUS_MAVEN_REPO = "http://nexus:8081/repository/maven-releases/"
-
         // TODO: reemplace por el ID exacto de la credencial que usted
         // creó en Jenkins > Manage Jenkins > Credentials (Fase 3.e).
-        NEXUS_CREDENTIALS_ID = "TODO-ID-CREDENCIAL-NEXUS"
+        NEXUS_REGISTRY       = "host.docker.internal:9180"
+        NEXUS_MAVEN_REPO     = "http://nexus:8081/repository/maven-releases/"
+        NEXUS_CREDENTIALS_ID = "nexus-credentials"
+        FRONTEND_API_URL     = "http://localhost:8080"
+
     }
 
     stages {
@@ -36,59 +35,138 @@ pipeline {
                 checkout scm
 
                 script {
-                    // TODO: calcule aquí IMAGE_TAG ahora que GIT_COMMIT
-                    // ya está disponible tras el checkout.
-                    // env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short=7 HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_TAG = "1.0.${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
+
+                    if (fileExists('backend/pom.xml')) {
+                        env.APP_DIR = '.'
+                    } else if (fileExists('codigo_base/backend/pom.xml')) {
+                        env.APP_DIR = 'codigo_base'
+                    } else {
+                        error('No se encontró backend/pom.xml en la estructura del repositorio.')
+                    }
                 }
 
-                dir('backend') {
-                    // TODO: ejecute la suite de pruebas unitarias y de
-                    // controlador (equivalente a la Fase 1 manual).
-                    sh 'TODO-COMANDO-MVN-TEST'
+                dir("${env.APP_DIR}/backend") {
+                    sh 'mvn -B -Drevision="$IMAGE_TAG" clean test'
                 }
             }
         }
 
         stage('Package & Tag Inmutable') {
             steps {
-                dir('backend') {
-                    // TODO: compile el .jar sin ejecutar pruebas
-                    // (ya se ejecutaron en la etapa anterior) y construya
-                    // la imagen Docker multi-stage etiquetada con
-                    // "${IMAGE_TAG}" (NUNCA "latest").
-                    sh 'TODO-COMANDO-MVN-PACKAGE'
-                    sh 'TODO-COMANDO-DOCKER-BUILD-BACKEND'
+                dir("${env.APP_DIR}/backend") {
+                    sh 'mvn -B -Drevision="$IMAGE_TAG" clean package -DskipTests'
+                    sh '''
+                        docker build \
+                          --build-arg REVISION="$IMAGE_TAG" \
+                          -t "$NEXUS_REGISTRY/studytrack-backend:$IMAGE_TAG" .
+                    '''
                 }
-                dir('frontend') {
-                    // TODO: construya la imagen del frontend, pasando
-                    // VITE_API_URL como build-arg, etiquetada también con
-                    // "${IMAGE_TAG}".
-                    sh 'TODO-COMANDO-DOCKER-BUILD-FRONTEND'
+
+                dir("${env.APP_DIR}/frontend") {
+                    sh '''
+                        docker build \
+                          --build-arg VITE_API_URL="$FRONTEND_API_URL" \
+                          -t "$NEXUS_REGISTRY/studytrack-frontend:$IMAGE_TAG" .
+                    '''
                 }
             }
         }
 
         stage('Publish to Nexus') {
             steps {
-                // TODO: use withCredentials(...) con NEXUS_CREDENTIALS_ID
-                // para inyectar usuario/clave sin exponerlos en el log,
-                // y publique:
-                //   1) el .jar del backend en NEXUS_MAVEN_REPO (mvn deploy)
-                //   2) ambas imágenes Docker (docker login + docker push)
-                //      en NEXUS_REGISTRY, usando "${IMAGE_TAG}".
-                sh 'TODO-PUBLICACION-MAVEN-Y-DOCKER'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: env.NEXUS_CREDENTIALS_ID,
+                        usernameVariable: 'NEXUS_USER',
+                        passwordVariable: 'NEXUS_PASS'
+                    )
+                ]) {
+                    dir("${env.APP_DIR}/backend") {
+                        sh '''
+                            set +x
+                            SETTINGS_FILE="$(pwd)/.jenkins-settings.xml"
+                            trap 'rm -f "$SETTINGS_FILE"' EXIT
+
+                            cat > "$SETTINGS_FILE" <<EOF_SETTINGS
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+  <servers>
+    <server>
+      <id>nexus-releases</id>
+      <username>${NEXUS_USER}</username>
+      <password>${NEXUS_PASS}</password>
+    </server>
+  </servers>
+</settings>
+EOF_SETTINGS
+
+                            mvn -B \
+                              -Drevision="$IMAGE_TAG" \
+                              -Dnexus.url="http://nexus:8081" \
+                              -DskipTests \
+                              -s "$SETTINGS_FILE" \
+                              deploy
+                        '''
+                    }
+
+                    sh '''
+                        set +x
+                        echo "$NEXUS_PASS" | docker login "$NEXUS_REGISTRY" \
+                          --username "$NEXUS_USER" --password-stdin
+                        docker push "$NEXUS_REGISTRY/studytrack-backend:$IMAGE_TAG"
+                        docker push "$NEXUS_REGISTRY/studytrack-frontend:$IMAGE_TAG"
+                        docker logout "$NEXUS_REGISTRY"
+                    '''
+                }
             }
         }
 
         stage('Deploy & Smoke Test') {
             steps {
-                // TODO: despliegue el stack de deploy/docker-compose.yml
-                // referenciando la imagen recién publicada (pase
-                // "${IMAGE_TAG}" como variable de entorno o mediante un
-                // archivo .env generado en este mismo stage), y valide
-                // con curl (con reintentos) que /api/tasks responda.
-                sh 'TODO-DEPLOY-DOCKER-COMPOSE'
-                sh 'TODO-SMOKE-TEST-CURL-CON-REINTENTOS'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: env.NEXUS_CREDENTIALS_ID,
+                        usernameVariable: 'NEXUS_USER',
+                        passwordVariable: 'NEXUS_PASS'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+                        echo "$NEXUS_PASS" | docker login "$NEXUS_REGISTRY" \
+                          --username "$NEXUS_USER" --password-stdin
+                    '''
+
+                    dir("${env.APP_DIR}/deploy") {
+                        sh '''
+                            docker compose pull
+                            docker compose up -d --remove-orphans
+                        '''
+                    }
+
+                    sh 'docker logout "$NEXUS_REGISTRY"'
+                }
+
+                sh '''
+                    for i in $(seq 1 12); do
+                      if curl -fsS http://host.docker.internal:8080/api/tasks >/dev/null; then
+                        echo "Smoke test OK en intento $i"
+                        exit 0
+                      fi
+                      echo "Backend aún no responde; intento $i/12"
+                      sleep 5
+                    done
+
+                    echo "Smoke test fallido después de 12 intentos"
+                    docker ps --filter name=studytrack-backend
+                    docker logs --tail 100 studytrack-backend || true
+                    exit 1
+                '''
             }
         }
     }
