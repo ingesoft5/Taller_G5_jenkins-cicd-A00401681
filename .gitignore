@@ -5,3 +5,5 @@
 **/target/
 **/dist/
 **/node_modules/
+**/nexus-db-backup/
+/codigo_base/infra/nexus_config/nexus-db-backup/

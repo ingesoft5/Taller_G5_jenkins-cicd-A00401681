@@ -2,6 +2,13 @@
 
 Ingeniería de Software V · Universidad Icesi · Período 202620
 
+### RENZO FERNANDO MOSQUERA DAZA
+
+![FUNCIONO.PNG](./FUNCIONO.PNG)
+
+* admin y admin123
+* admin y 71e800d325824e0997777ef5d3fcb0c6
+
 Este repositorio es el punto de partida del **Taller Evaluativo 2: Orquestación
 CI/CD con Jenkins, Empaquetamiento Inmutable en Nexus y Webhooks con Smee.io**.
 Varios archivos están **incompletos a propósito** (marcados con `TODO`): su
