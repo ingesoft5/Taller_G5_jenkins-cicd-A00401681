@@ -3,7 +3,7 @@ FROM jenkins/jenkins:lts-jdk17
 USER root
 ARG DOCKER_COMPOSE_VERSION=2.29.7
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git maven docker.io \
+    && apt-get install -y --no-install-recommends ca-certificates curl git maven docker-cli \
     && mkdir -p /usr/local/lib/docker/cli-plugins \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
